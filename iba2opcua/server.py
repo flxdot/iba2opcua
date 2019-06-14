@@ -171,9 +171,10 @@ class IbaToUaServer():
 
                 # define the channel object
                 value_var = await opc_channel.add_variable(idx, "value", val)
-                value_var.set_writable(True)
+                await value_var.set_writable(True)
                 for key, val in chan.items():
-                    await opc_channel.add_variable(idx, key, val).set_writable(False)
+                    the_var = await opc_channel.add_variable(idx, key, val)
+                    await the_var.set_writable(False)
 
                 # store the handles to the value variable and the opc_channel in the channel dict
                 chan['opc_obj'] = opc_channel
@@ -201,7 +202,7 @@ class IbaToUaServer():
             VariableUpdater(server=self._server, channel=channel, period=float(sampleRate), data=data).start()
 
 
-class VariableUpdater(Thread):
+class VariableUpdater():
     """The VariableUpdater is used to periodically update the values on the opc server."""
 
     def __init__(self, server, channel, period, data):
@@ -212,7 +213,8 @@ class VariableUpdater(Thread):
         :param data: (mandatory, pandas.DataFrame) the loaded data
         """
 
-        super().__init__(name='Updater_{}'.format(period))
+        #super().__init__(name='Updater_{}'.format(period))
+        self.name = 'Updater_{}'.format(period)
 
         self.server = server
         self.channel = channel
@@ -223,7 +225,12 @@ class VariableUpdater(Thread):
         self._close_event = Event()
         self._nextCall = time.time()
 
-    def run(self):
+    def start(self):
+        loop = asyncio.get_event_loop()
+        loop.set_debug(True)
+        loop.run_until_complete(self.run())
+
+    async def run(self):
         """This method will make
 
         :return: None
@@ -238,8 +245,7 @@ class VariableUpdater(Thread):
 
             # do your tasks here
             for chan in self.channel:
-                # faster than chan['opc_value'].set_value(9.9)
-                self.server.set_attribute_value(chan['opc_value'].nodeid, ua.DataValue(self.data[chan['id']][idx]))
+                await self._write_channel(chan, idx)
 
             # increase index
             idx += 1
@@ -253,6 +259,17 @@ class VariableUpdater(Thread):
                 time.sleep(sleepLength)
             else:
                 print('{0}: Sample rate exceeded by {1:.2f}ms.'.format(self.name, abs(sleepLength)*1000))
+
+    async def _write_channel(self, chan, idx):
+        """Writes the values to the opc server
+
+        :param chan: (mandatory, dict) dictionary containing the channel definition
+        :return:
+        """
+
+        # faster than chan['opc_value'].set_value(9.9)
+        await chan['opc_value'].set_value(self.data[chan['id']][idx])
+        # await self.server.set_attribute_value(chan['opc_value'].nodeid, ua.DataValue(self.data[chan['id']][idx]))
 
     def stop(self):
         """Call to stop the timer"""
