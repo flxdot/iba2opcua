@@ -1,4 +1,4 @@
-from threading import Thread
+import asyncio
 import copy
 import logging
 from datetime import datetime
@@ -7,19 +7,8 @@ from math import sin
 import sys
 sys.path.insert(0, "..")
 
-try:
-    from IPython import embed
-except ImportError:
-    import code
 
-    def embed():
-        myvars = globals()
-        myvars.update(locals())
-        shell = code.InteractiveConsole(myvars)
-        shell.interact()
-
-
-from opcua import ua, uamethod, Server
+from asyncua import ua, uamethod, Server
 
 
 class SubHandler(object):
@@ -53,38 +42,22 @@ def multiply(parent, x, y):
     return x * y
 
 
-class VarUpdater(Thread):
-    def __init__(self, var):
-        Thread.__init__(self)
-        self._stopev = False
-        self.var = var
-
-    def stop(self):
-        self._stopev = True
-
-    def run(self):
-        while not self._stopev:
-            v = sin(time.time() / 10)
-            self.var.set_value(v)
-            time.sleep(0.1)
-
-
-
-if __name__ == "__main__":
+async def main():
     # optional: setup logging
-    logging.basicConfig(level=logging.WARN)
-    #logger = logging.getLogger("opcua.address_space")
+    logging.basicConfig(level=logging.INFO)
+    #logger = logging.getLogger("asyncua.address_space")
     # logger.setLevel(logging.DEBUG)
-    #logger = logging.getLogger("opcua.internal_server")
+    #logger = logging.getLogger("asyncua.internal_server")
     # logger.setLevel(logging.DEBUG)
-    #logger = logging.getLogger("opcua.binary_server_asyncio")
+    #logger = logging.getLogger("asyncua.binary_server_asyncio")
     # logger.setLevel(logging.DEBUG)
-    #logger = logging.getLogger("opcua.uaprocessor")
+    #logger = logging.getLogger("asyncua.uaprocessor")
     # logger.setLevel(logging.DEBUG)
 
     # now setup our server
     server = Server()
-    #server.disable_clock()
+    await server.init()
+    server.disable_clock()  #for debuging
     #server.set_endpoint("opc.tcp://localhost:4840/freeopcua/server/")
     server.set_endpoint("opc.tcp://0.0.0.0:4840/freeopcua/server/")
     server.set_server_name("FreeOpcUa Example Server")
@@ -96,67 +69,72 @@ if __name__ == "__main__":
 
     # setup our own namespace
     uri = "http://examples.freeopcua.github.io"
-    idx = server.register_namespace(uri)
+    idx = await server.register_namespace(uri)
 
     # create a new node type we can instantiate in our address space
-    dev = server.nodes.base_object_type.add_object_type(idx, "MyDevice")
-    dev.add_variable(idx, "sensor1", 1.0).set_modelling_rule(True)
-    dev.add_property(idx, "device_id", "0340").set_modelling_rule(True)
-    ctrl = dev.add_object(idx, "controller")
-    ctrl.set_modelling_rule(True)
-    ctrl.add_property(idx, "state", "Idle").set_modelling_rule(True)
+    dev = await server.nodes.base_object_type.add_object_type(idx, "MyDevice")
+    await (await dev.add_variable(idx, "sensor1", 1.0)).set_modelling_rule(True)
+    await (await dev.add_property(idx, "device_id", "0340")).set_modelling_rule(True)
+    ctrl = await dev.add_object(idx, "controller")
+    await ctrl.set_modelling_rule(True)
+    await (await ctrl.add_property(idx, "state", "Idle")).set_modelling_rule(True)
 
     # populating our address space
 
     # First a folder to organise our nodes
-    myfolder = server.nodes.objects.add_folder(idx, "myEmptyFolder")
+    myfolder = await server.nodes.objects.add_folder(idx, "myEmptyFolder")
     # instanciate one instance of our device
-    mydevice = server.nodes.objects.add_object(idx, "Device0001", dev)
-    mydevice_var = mydevice.get_child(["{}:controller".format(idx), "{}:state".format(idx)])  # get proxy to our device state variable
+    mydevice = await server.nodes.objects.add_object(idx, "Device0001", dev)
+    mydevice_var = await mydevice.get_child([f"{idx}:controller", f"{idx}:state"])  # get proxy to our device state variable 
     # create directly some objects and variables
-    myobj = server.nodes.objects.add_object(idx, "MyObject")
-    myvar = myobj.add_variable(idx, "MyVariable", 6.7)
-    mysin = myobj.add_variable(idx, "MySin", 0, ua.VariantType.Float)
-    myvar.set_writable()    # Set MyVariable to be writable by clients
-    mystringvar = myobj.add_variable(idx, "MyStringVariable", "Really nice string")
-    mystringvar.set_writable()    # Set MyVariable to be writable by clients
-    mydtvar = myobj.add_variable(idx, "MyDateTimeVar", datetime.utcnow())
-    mydtvar.set_writable()    # Set MyVariable to be writable by clients
-    myarrayvar = myobj.add_variable(idx, "myarrayvar", [6.7, 7.9])
-    myarrayvar = myobj.add_variable(idx, "myStronglytTypedVariable", ua.Variant([], ua.VariantType.UInt32))
-    myprop = myobj.add_property(idx, "myproperty", "I am a property")
-    mymethod = myobj.add_method(idx, "mymethod", func, [ua.VariantType.Int64], [ua.VariantType.Boolean])
-    multiply_node = myobj.add_method(idx, "multiply", multiply, [ua.VariantType.Int64, ua.VariantType.Int64], [ua.VariantType.Int64])
+    myobj = await server.nodes.objects.add_object(idx, "MyObject")
+    myvar = await myobj.add_variable(idx, "MyVariable", 6.7)
+    await myvar.set_writable()    # Set MyVariable to be writable by clients
+    mystringvar = await myobj.add_variable(idx, "MyStringVariable", "Really nice string")
+    await mystringvar.set_writable()    # Set MyVariable to be writable by clients
+    mydtvar = await myobj.add_variable(idx, "MyDateTimeVar", datetime.utcnow())
+    await mydtvar.set_writable()    # Set MyVariable to be writable by clients
+    myarrayvar = await myobj.add_variable(idx, "myarrayvar", [6.7, 7.9])
+    myarrayvar = await myobj.add_variable(idx, "myStronglytTypedVariable", ua.Variant([], ua.VariantType.UInt32))
+    myprop = await myobj.add_property(idx, "myproperty", "I am a property")
+    mymethod = await myobj.add_method(idx, "mymethod", func, [ua.VariantType.Int64], [ua.VariantType.Boolean])
+    multiply_node = await myobj.add_method(idx, "multiply", multiply, [ua.VariantType.Int64, ua.VariantType.Int64], [ua.VariantType.Int64])
 
     # import some nodes from xml
-    server.import_xml("custom_nodes.xml")
+    await server.import_xml("custom_nodes.xml")
 
     # creating a default event object
     # The event object automatically will have members for all events properties
     # you probably want to create a custom event type, see other examples
-    myevgen = server.get_event_generator()
+    myevgen = await server.get_event_generator()
     myevgen.event.Severity = 300
 
     # starting!
-    server.start()
+    await server.start()
     print("Available loggers are: ", logging.Logger.manager.loggerDict.keys())
-    vup = VarUpdater(mysin)  # just  a stupide class update a variable
-    vup.start()
     try:
         # enable following if you want to subscribe to nodes on server side
         #handler = SubHandler()
         #sub = server.create_subscription(500, handler)
         #handle = sub.subscribe_data_change(myvar)
         # trigger event, all subscribed clients wil receive it
-        var = myarrayvar.get_value()  # return a ref to value in db server side! not a copy!
+        var = await myarrayvar.get_value()  # return a ref to value in db server side! not a copy!
         var = copy.copy(var)  # WARNING: we need to copy before writting again otherwise no data change event will be generated
         var.append(9.3)
-        myarrayvar.set_value(var)
-        mydevice_var.set_value("Running")
+        await myarrayvar.set_value(var)
+        await mydevice_var.set_value("Running")
         myevgen.trigger(message="This is BaseEvent")
-        server.set_attribute_value(myvar.nodeid, ua.DataValue(9.9))  # Server side write method which is a but faster than using set_value
+        server.set_attribute_value(myvar.nodeid, ua.DataValue(0.9))  # Server side write method which is a but faster than using set_value
+        while True:
+            await asyncio.sleep(0.1)
+            server.set_attribute_value(myvar.nodeid, ua.DataValue(sin(time.time())))
 
-        embed()
+
     finally:
-        vup.stop()
-        server.stop()
+        await server.stop()
+
+
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.set_debug(True)
+    loop.run_until_complete(main())

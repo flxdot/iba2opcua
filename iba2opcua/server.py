@@ -1,7 +1,8 @@
 import os
+import asyncio
 import time
 from threading import Thread, Event
-from opcua import ua, uamethod, Server
+from asyncua import ua, uamethod, Server
 from pyIbaTools.pyIbaTools import getSortedIbaFiles, readIbaFile, get_channels, get_channel_info
 
 
@@ -32,7 +33,7 @@ class IbaToUaServer():
         # dictionary of threads for each unique sample rate
         self._value_updater = dict()
 
-    def start(self):
+    async def start(self):
         """The actual run function called by the Thread super class. All the magic happens here.
 
         1. discover the iba files in the dat sub folder
@@ -54,14 +55,17 @@ class IbaToUaServer():
 
         # build the opc server
         print('building opc server ...')
-        self.init_opc()
+        await self.init_opc()
 
         # start the server
         print('starting opc server ...')
-        self._server.start()
+        await self._server.start()
 
         # create the value updater
         self._write_values()
+
+        while True:
+            await asyncio.sleep(0.1)
 
 
     def discover_iba_files(self):
@@ -123,13 +127,14 @@ class IbaToUaServer():
 
         return {'modules': modules, 'channels': channels}
 
-    def init_opc(self):
+    async def init_opc(self):
         """Initializes the actual OPC Server and creates all folder, nodes, etc.
 
         :return: None
         """
 
         self._server = Server()
+        await self._server.init()
         self._server.set_endpoint("opc.tcp://localhost:4840/sms-digital/iba-playback/")
         self._server.set_server_name("iba Files Playback OPC UA Server")
 
@@ -141,34 +146,34 @@ class IbaToUaServer():
 
         # setup our own namespace
         uri = "http://iba-playback.sms-digital.io"
-        idx = self._server.register_namespace(uri)
+        idx = await self._server.register_namespace(uri)
 
         # add modules folder
-        modules = self._server.nodes.objects.add_folder(idx, "Modules")
+        modules = await self._server.nodes.objects.add_folder(idx, "Modules")
         for module, channel in self.iba_info['modules'].items():
             print('\tModule: {} ...'.format(module))
             # create a new folder for the module
-            module_folder = modules.add_folder(idx, module)
+            module_folder = await modules.add_folder(idx, module)
 
             # create a folder for analog and digital signals
-            analog_folder = module_folder.add_folder(idx, 'Analog')
-            digital_folder = module_folder.add_folder(idx, 'Digital')
+            analog_folder = await module_folder.add_folder(idx, 'Analog')
+            digital_folder = await module_folder.add_folder(idx, 'Digital')
 
             # add the channel
             for chan in channel:
                 # create channel
                 if chan['type'] == 'analog':
-                    opc_channel = analog_folder.add_object(idx, chan['name'])
+                    opc_channel = await analog_folder.add_object(idx, chan['name'])
                     val = 0.0
                 else:
-                    opc_channel = digital_folder.add_object(idx, chan['name'])
+                    opc_channel = await digital_folder.add_object(idx, chan['name'])
                     val = False
 
                 # define the channel object
-                value_var = opc_channel.add_variable(idx, "value", val)
+                value_var = await opc_channel.add_variable(idx, "value", val)
                 value_var.set_writable(True)
                 for key, val in chan.items():
-                    opc_channel.add_variable(idx, key, val).set_writable(False)
+                    await opc_channel.add_variable(idx, key, val).set_writable(False)
 
                 # store the handles to the value variable and the opc_channel in the channel dict
                 chan['opc_obj'] = opc_channel
@@ -234,8 +239,7 @@ class VariableUpdater(Thread):
             # do your tasks here
             for chan in self.channel:
                 # faster than chan['opc_value'].set_value(9.9)
-                chan['opc_value'].set_value(self.data[chan['id']][idx])
-                # self.server.set_attribute_value(chan['opc_value'].nodeid, ua.DataValue(self.data[chan['id']][idx]))
+                self.server.set_attribute_value(chan['opc_value'].nodeid, ua.DataValue(self.data[chan['id']][idx]))
 
             # increase index
             idx += 1
@@ -255,6 +259,11 @@ class VariableUpdater(Thread):
 
         self._close_event.set()
 
-if __name__ == "__main__":
+async def main():
     the_server = IbaToUaServer()
-    the_server.start()
+    await the_server.start()
+
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.set_debug(True)
+    loop.run_until_complete(main())
