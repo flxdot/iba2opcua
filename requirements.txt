@@ -1,0 +1,4 @@
+opcua
+numpy
+pandas
+cryptography
